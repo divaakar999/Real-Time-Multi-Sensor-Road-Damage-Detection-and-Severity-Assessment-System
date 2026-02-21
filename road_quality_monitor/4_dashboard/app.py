@@ -65,6 +65,14 @@ def get_yolo_model(path):
     from ultralytics import YOLO
     return YOLO(str(path))
 
+# ── Damage Classes ─────────────────────────────────────────────────────
+ROAD_DAMAGE_CLASSES = {
+    "pothole", "crack", "wear",
+    "alligator crack", "longitudinal crack",
+    "transverse crack", "depression", "raveling",
+    "rutting", "bleeding", "damage",
+}
+
 # ── WebRTC Video Processor (Guarded) ───────────────────────────────────
 if WEBRTC_AVAILABLE:
     class RoadDamageProcessor:
@@ -550,124 +558,37 @@ with tab1:
 
         # ── Show demo frame or live feed ─────────────────────────────
         if st.session_state["is_detecting"] and "🎥" in mode:
-            # This runs the actual detection
-            try:
-                from ultralytics import YOLO
-                from severity_classifier import SeverityClassifier
-                from gps_tagger import GPSTagger
-
-                weights = ROOT / "weights" / "best.pt"
-                if not weights.exists():
-                    st.error(
-                        "⚠️ No trained model found at `weights/best.pt`\n\n"
-                        "Run: `python setup_demo_model.py` to download a demo model, "
-                        "or `python 2_model/train_yolov8.py` to train your own."
-                    )
+            # ── BRANCH: WebRTC (Mobile) vs Local ───────────────────────────
+            if video_source == "webrtc":
+                if not WEBRTC_AVAILABLE:
+                    st.error("⚠️ Browser Camera (WebRTC) is not available. Please check dependencies.")
                     st.session_state["is_detecting"] = False
                 else:
-                    ROAD_DAMAGE_CLASSES = {
-                        "pothole", "crack", "wear",
-                        "alligator crack", "longitudinal crack",
-                        "transverse crack", "depression", "raveling",
-                        "rutting", "bleeding", "damage",
-                    }
-
-                    # ── BRANCH: WebRTC (Mobile) vs Local ───────────────────────────
-                    if video_source == "webrtc":
-                        if not WEBRTC_AVAILABLE:
-                            st.error("⚠️ Browser Camera (WebRTC) is not available. Please check dependencies.")
-                            st.session_state["is_detecting"] = False
-                        else:
-                            st.info("📱 **Browser Camera Active** — Detection is running on your device's stream.")
-                            ctx = webrtc_streamer(
-                                key="road-monitor-webrtc",
-                                mode=WebRtcMode.SENDRECV,
-                                rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
-                                video_processor_factory=lambda: RoadDamageProcessor(
-                                    get_yolo_model(weights), SeverityClassifier(), GPSTagger(),
-                                    conf_threshold, iou_threshold, ROAD_DAMAGE_CLASSES
-                                ),
-                                async_processing=True,
-                            )
-                            # Sync detections back to main state
-                            if ctx.video_processor and len(ctx.video_processor.new_detections) > 0:
-                                st.session_state["detections"].extend(ctx.video_processor.new_detections)
-                                ctx.video_processor.new_detections = []
-
-                    else:
-                        # ── BRANCH: Local Hardware / File ───────────────────────────
-                        cap_src = (
-                            int(video_source) if str(video_source).isdigit()
-                            else video_source
-                        )
-                        model   = get_yolo_model(weights)
-                        clf     = SeverityClassifier()
-                        gps     = GPSTagger()
-                        cap     = cv2.VideoCapture(cap_src)
-
-                        if not cap.isOpened():
-                            st.error(f"Cannot open video source: {video_source}")
-                            st.session_state["is_detecting"] = False
-                        else:
-                            SEVERITY_BGR = {
-                                "HIGH": (0, 0, 220), "MEDIUM": (0, 165, 255), "LOW": (50, 200, 50)
-                            }
-                            NON_ROAD_BGR = (180, 180, 180)
-
-                            while st.session_state["is_detecting"]:
-                                ret, frame = cap.read()
-                                if not ret:
-                                    break
-
-                                results = model.predict(
-                                    frame, conf=conf_threshold,
-                                    iou=iou_threshold, verbose=False
-                                )
-
-                                annotated = frame.copy()
-                                new_dets  = []
-
-                                for res in results:
-                                    for box in (res.boxes or []):
-                                        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                                        cid = int(box.cls[0])
-                                        cf  = float(box.conf[0])
-                                        cn  = model.names.get(cid, f"class_{cid}")
-                                        
-                                        if cn.lower() in ROAD_DAMAGE_CLASSES:
-                                            sev    = clf.classify((x1, y1, x2, y2), frame.shape[:2], cn, cf)
-                                            color  = SEVERITY_BGR.get(sev, (255, 255, 255))
-                                            label  = f"{cn} [{sev}] {cf:.2f}"
-                                            gps_pt = gps.get_current()
-                                            new_dets.append({
-                                                "class": cn, "confidence": cf, "severity": sev,
-                                                "bbox": [x1, y1, x2, y2], "gps": gps_pt,
-                                                "timestamp": datetime.now().isoformat(),
-                                            })
-                                        else:
-                                            color = NON_ROAD_BGR
-                                            label = f"{cn} {cf:.2f}"
-
-                                        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-                                        cv2.putText(annotated, label, (x1, max(y1-6, 14)),
-                                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-                                st.session_state["detections"].extend(new_dets)
-                                annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-                                frame_placeholder.image(annotated_rgb, channels="RGB", use_container_width=True)
-
-                                if len(st.session_state["detections"]) % 50 == 0:
-                                    with open(ROOT / "detections.json", "w") as jf:
-                                        json.dump(st.session_state["detections"], jf)
-
-                                time.sleep(0.02)
-                            cap.release()
-            except Exception as e:
-                st.error(f"Error during detection: {e}")
-                st.error(f"Import error: {e}\nInstall requirements: pip install -r requirements.txt")
+                    st.info("📱 **Browser Camera Active** — Detection is running on your device's stream.")
+                    weights = ROOT / "weights" / "best.pt"
+                    ctx = webrtc_streamer(
+                        key="road-monitor-webrtc",
+                        mode=WebRtcMode.SENDRECV,
+                        rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
+                        video_processor_factory=lambda: RoadDamageProcessor(
+                            get_yolo_model(weights), SeverityClassifier(), GPSTagger(),
+                            conf_threshold, iou_threshold, ROAD_DAMAGE_CLASSES
+                        ),
+                        async_processing=True,
+                    )
+                    # Sync detections back to main state
+                    if ctx.video_processor and len(ctx.video_processor.new_detections) > 0:
+                        st.session_state["detections"].extend(ctx.video_processor.new_detections)
+                        ctx.video_processor.new_detections = []
+            else:
+                # ── BRANCH: Local Hardware / File ───────────────────────────
+                # NOTE: The loop logic is at the very bottom of the script
+                # to prevent blocking UI rendering.
+                st.info("💡 **Ready to Start** — Live feed will appear below.")
+                st.spinner("🔄 Initializing camera/stream...")
 
         else:
-            # ── Static demo frame ──────────────────────────────────────
+            # ── Static demo frame (IDLE) ────────────────────────────────
             if CV2_AVAILABLE:
                 demo_frame = np.zeros((480, 640, 3), dtype=np.uint8)
                 demo_frame[:] = (30, 35, 45) # Dark blue-grey
@@ -1025,3 +946,77 @@ st.markdown("""
     Built with YOLOv8, OpenCV, Streamlit & Folium
 </div>
 """, unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  DETECTION BACKGROUND LOOP (Non-blocking UI Rendering)
+# ══════════════════════════════════════════════════════════════════════
+if st.session_state["is_detecting"] and "🎥" in mode:
+    try:
+        from ultralytics import YOLO
+        from severity_classifier import SeverityClassifier
+        from gps_tagger import GPSTagger
+
+        weights = ROOT / "weights" / "best.pt"
+        if not weights.exists():
+            st.error("⚠️ No trained model found at `weights/best.pt`")
+            st.session_state["is_detecting"] = False
+        else:
+
+            if video_source == "webrtc":
+                # WebRTC handles its own loop in a child process/thread
+                pass 
+            else:
+                cap_src = int(video_source) if str(video_source).isdigit() else video_source
+                cap = cv2.VideoCapture(cap_src)
+                
+                if not cap.isOpened():
+                    st.error(f"Cannot open video source: {video_source}")
+                    st.session_state["is_detecting"] = False
+                else:
+                    model = get_yolo_model(weights)
+                    clf = SeverityClassifier()
+                    gps = GPSTagger()
+                    
+                    SEVERITY_BGR = {"HIGH": (0, 0, 220), "MEDIUM": (0, 165, 255), "LOW": (50, 200, 50)}
+                    
+                    while st.session_state["is_detecting"]:
+                        ret, frame = cap.read()
+                        if not ret: break
+
+                        results = model.predict(frame, conf=conf_threshold, iou=iou_threshold, verbose=False)
+                        annotated = frame.copy()
+                        new_dets = []
+
+                        for res in results:
+                            for box in (res.boxes or []):
+                                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                                cid = int(box.cls[0]); cf = float(box.conf[0])
+                                cn = model.names.get(cid, f"class_{cid}")
+                                
+                                if cn.lower() in ROAD_DAMAGE_CLASSES:
+                                    sev = clf.classify((x1, y1, x2, y2), frame.shape[:2], cn, cf)
+                                    color = SEVERITY_BGR.get(sev, (255, 255, 255))
+                                    label = f"{cn} [{sev}] {cf:.2f}"
+                                    new_dets.append({
+                                        "class": cn, "confidence": cf, "severity": sev,
+                                        "bbox": [x1, y1, x2, y2], "gps": gps.get_current(),
+                                        "timestamp": datetime.now().isoformat()
+                                    })
+                                else:
+                                    color = (180, 180, 180); label = f"{cn} {cf:.2f}"
+
+                                if CV2_AVAILABLE:
+                                    cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+                                    cv2.putText(annotated, label, (x1, max(y1-6, 14)), 
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+                        st.session_state["detections"].extend(new_dets)
+                        if CV2_AVAILABLE:
+                            annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
+                            frame_placeholder.image(annotated_rgb, channels="RGB", use_container_width=True)
+                        
+                        time.sleep(0.01)
+                    cap.release()
+    except Exception as e:
+        st.error(f"Detection error: {e}")

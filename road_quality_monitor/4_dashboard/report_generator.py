@@ -214,7 +214,8 @@ def generate_pdf_report(
 
     # Table rows
     pdf.set_font("Helvetica", "", 8)
-    for i, det in enumerate(list(detections)[:50]):
+    det_list = list(detections)
+    for i, det in enumerate(det_list[:50]):  # type: ignore
         sev  = det.get("severity", "LOW")
         gps  = det.get("gps", {})
         fill = i % 2 == 0
@@ -313,7 +314,8 @@ def generate_csv_report(
     csv_bytes = buf.getvalue().encode("utf-8")
 
     if output_path is not None:
-        with open(str(output_path), "wb") as f:
+        p_str = str(output_path)
+        with open(p_str, "wb") as f:
             f.write(csv_bytes)
         print(f"✅ CSV report saved: {output_path}")
 

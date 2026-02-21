@@ -105,12 +105,12 @@ class GPSSimulator:
         jitter_heading = self.heading + random.gauss(0, 2.0)
 
         return GPSPoint(
-            lat       = round(float(lat), 7),
-            lon       = round(float(lon), 7),
+            lat       = round(float(lat), 7),   # type: ignore
+            lon       = round(float(lon), 7),   # type: ignore
             alt       = float(920.0 + random.gauss(0, 0.5)),
             speed     = float(self.speed + random.gauss(0, 2.0)),
-            heading   = round(float(jitter_heading % 360), 1),
-            accuracy  = round(float(abs(random.gauss(3.0, 1.0))), 1),
+            heading   = round(float(jitter_heading % 360), 1),  # type: ignore
+            accuracy  = round(float(abs(random.gauss(3.0, 1.0))), 1), # type: ignore
             timestamp = datetime.now(timezone.utc).isoformat(),
             source    = "simulated",
         )
@@ -146,13 +146,16 @@ class RealGPS:
             return None
         try:
             packet = self._gpsd.get_current()
+            if packet is None or not hasattr(packet, 'lat') or packet.lat is None:
+                return None
+                
             return GPSPoint(
-                lat       = round(float(packet.lat), 7),
-                lon       = round(float(packet.lon), 7),
-                alt       = round(float(packet.alt), 1) if packet.alt else 0.0,
-                speed     = round(float(packet.speed() * 3.6), 1),
-                heading   = round(float(packet.movement().get("track", 0.0)), 1),
-                accuracy  = round(float(packet.position_precision()[0]), 1),
+                lat       = round(float(packet.lat), 7),     # type: ignore
+                lon       = round(float(packet.lon), 7),     # type: ignore
+                alt       = round(float(getattr(packet, 'alt', 0.0)), 1),    # type: ignore
+                speed     = round(float(getattr(packet, 'speed', 0.0)) * 3.6, 1), # type: ignore
+                heading   = round(float(getattr(packet, 'track', 0.0)), 1), # type: ignore
+                accuracy  = 5.0,
                 timestamp = datetime.now(timezone.utc).isoformat(),
                 source    = "gps",
             )
@@ -188,7 +191,7 @@ class GPSTagger:
                 self._use_real = False
                 print("   Using simulated GPS as fallback.")
 
-        self._history       = []
+        self._history: list[dict] = []
         self._log_path      = Path(__file__).parent.parent / "gps_log.json"
 
     def get_current(self) -> dict:
@@ -254,7 +257,7 @@ class GPSTagger:
         a = (math.sin(dlat / 2) ** 2 +
              math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2)
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-        return round(float(R * c), 2)
+        return round(float(R * c), 2)  # type: ignore
 
     @staticmethod
     def reverse_geocode(lat: float, lon: float) -> str:

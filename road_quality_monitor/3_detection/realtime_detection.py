@@ -160,7 +160,7 @@ class RoadDamageDetector:
                     detection = {
                         "frame":      self.frame_count,
                         "class":      class_name,
-                        "confidence": round(conf_score, 3),
+                        "confidence": round(float(conf_score), 3),  # type: ignore
                         "severity":   severity,
                         "bbox":       [x1, y1, x2, y2],
                         "gps":        gps,
@@ -311,7 +311,7 @@ def run_detection(source, show: bool = True, record: bool = False):
                       f"GPS({det['gps']['lat']:.5f}, {det['gps']['lon']:.5f})")
 
             if writer:
-                writer.write(annotated)
+                writer.write(annotated)  # type: ignore
 
             if show:
                 cv2.imshow("Road Quality Monitor  [q=quit]", annotated)

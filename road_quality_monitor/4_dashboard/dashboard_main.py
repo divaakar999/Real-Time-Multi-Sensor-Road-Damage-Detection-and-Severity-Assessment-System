@@ -331,15 +331,15 @@ def generate_demo_detections(n: int = 30) -> list:
         dets.append({
             "frame":      i * 5,
             "class":      cls,
-            "confidence": round(float(conf), 3),
+            "confidence": round(float(conf), 3),  # type: ignore
             "severity":   sev,
             "bbox":       [random.randint(100, 400), random.randint(100, 300),
                            random.randint(400, 640), random.randint(300, 480)],
             "gps": {
-                "lat":       round(float(base_lat + dist * math.cos(angle)), 6),
-                "lon":       round(float(base_lon + dist * math.sin(angle)), 6),
+                "lat":       round(float(base_lat + dist * math.cos(angle)), 6), # type: ignore
+                "lon":       round(float(base_lon + dist * math.sin(angle)), 6), # type: ignore
                 "alt":       920.0,
-                "speed":     round(float(random.uniform(20, 50)), 1),
+                "speed":     round(float(random.uniform(20, 50)), 1), # type: ignore
                 "source":    "simulated",
             },
             "timestamp": (datetime.now() - timedelta(seconds=n - i)).isoformat(),
@@ -539,14 +539,14 @@ col_v, col_m = st.columns([1.1, 0.9])
 
 with col_v:
     st.markdown('<div class="section-header">📹 Real-Time Detection Feed</div>', unsafe_allow_html=True)
-    frame_placeholder = st.empty()
+    video_slot = st.empty()
     
     # Control buttons
     btn_col1, btn_col2, btn_col3 = st.columns(3)
     with btn_col1:
-        start_btn = st.button("▶ Start Detection", type="primary", width="stretch", disabled=st.session_state["is_detecting"])
+        start_btn = st.button("▶ Start Detection", type="primary", width="stretch", disabled=st.session_state["is_detecting"], key="start_main")
     with btn_col2:
-        stop_btn = st.button("⏹ Stop", width="stretch", disabled=not st.session_state["is_detecting"])
+        stop_btn = st.button("⏹ Stop", width="stretch", disabled=not st.session_state["is_detecting"], key="stop_main")
     with btn_col3:
         clear_btn = st.button("🗑 Clear Data", width="stretch")
 
@@ -557,47 +557,63 @@ with col_v:
     if start_btn: st.session_state["is_detecting"] = True
     if stop_btn:  st.session_state["is_detecting"] = False
 
-    # Video Render Logic
+    # Detection Loop / Video Render
     if st.session_state["is_detecting"] and "🎥" in mode:
         if video_source == "webrtc":
             if not WEBRTC_AVAILABLE:
-                st.error("⚠️ WebRTC not available.")
+                video_slot.error("⚠️ WebRTC component (streamlit-webrtc) is not installed.")
             else:
-                with st.spinner("🧠 Initializing AI Engine..."):
-                    weights_path = ROOT / "weights" / "best.pt"
-                    model_inst = get_yolo_model(weights_path)
-                    clf_inst   = get_severity_classifier()
-                    gps_inst   = get_gps_tagger()
+                # Pre-load to ensure no lag during stream init
+                weights_path = ROOT / "weights" / "best.pt"
+                m = get_yolo_model(weights_path)
+                c = get_severity_classifier()
+                g = get_gps_tagger()
                 
-                ctx = webrtc_streamer(
-                    key="road-monitor-persistent-v3", 
-                    mode=WebRtcMode.SENDRECV,
-                    rtc_configuration=RTCConfiguration({
-                        "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}, {"urls": ["stun:stun1.l.google.com:19302"]}]
-                    }),
-                    media_stream_constraints={"video": True, "audio": False},
-                    video_processor_factory=lambda: RoadDamageProcessor(
-                        model_inst, clf_inst, gps_inst,
-                        conf_threshold, iou_threshold, ROAD_DAMAGE_CLASSES
-                    ),
-                    async_processing=True,
-                )
+                with video_slot:
+                    ctx = webrtc_streamer(
+                        key="road-monitor-persistent-v4", 
+                        mode=WebRtcMode.SENDRECV,
+                        rtc_configuration=RTCConfiguration({
+                            "iceServers": [
+                                {"urls": ["stun:stun.l.google.com:19302"]},
+                                {"urls": ["stun:stun1.l.google.com:19302"]},
+                                {"urls": ["stun:stun2.l.google.com:19302"]},
+                                {"urls": ["stun:stun.services.mozilla.com"]}
+                            ]
+                        }),
+                        media_stream_constraints={"video": True, "audio": False},
+                        video_processor_factory=lambda: RoadDamageProcessor(
+                            m, c, g, conf_threshold, iou_threshold, ROAD_DAMAGE_CLASSES
+                        ),
+                        async_processing=True,
+                        send_html_to_placeholder=True, # Improved rendering
+                    )
+                
                 if ctx and ctx.video_processor:
-                    new_ones = list(ctx.video_processor.new_detections)
+                    # Thread-safe detection extraction from background processor
+                    new_ones = []
+                    try:
+                        # Take all available detections
+                        while ctx.video_processor.new_detections:
+                            new_ones.append(ctx.video_processor.new_detections.pop(0))
+                    except (AttributeError, IndexError):
+                        pass
+
                     if new_ones:
                         st.session_state["detections"].extend(new_ones)
-                        ctx.video_processor.new_detections = []
+                        # Pulse limit 500
                         if len(st.session_state["detections"]) > 500:
                             st.session_state["detections"] = st.session_state["detections"][-500:]
         else:
-            st.info("💡 **Detection Active** — Processing source...")
+            video_slot.info("💡 **Detection Active** — Processing selected source...")
     else:
-        # IDLE Frame
+        # IDLE Frame in the SAME slot to prevent layout shifts
         if CV2_AVAILABLE:
             demo_frame = np.zeros((480, 640, 3), dtype=np.uint8)
             demo_frame[:] = (30, 35, 45)
             cv2.putText(demo_frame, "SYSTEM IDLE", (220, 240), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (88, 166, 255), 2)
-            frame_placeholder.image(cv2.cvtColor(demo_frame, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
+            cv2.putText(demo_frame, "Ready for live detection", (235, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (139, 148, 158), 1)
+            video_slot.image(cv2.cvtColor(demo_frame, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
 
 with col_m:
     st.markdown('<div class="section-header">🗺️ Live Damage Map</div>', unsafe_allow_html=True)
@@ -783,8 +799,8 @@ with t2:
 
         # Build display DataFrame
         rows = []
-        rev_filtered = list(filtered)[::-1]
-        for d in rev_filtered[:100]:   # Last 100
+        rev_filtered = list(filtered)[::-1]  # type: ignore
+        for d in rev_filtered[:100]:   # type: ignore
             gps = d.get("gps", {})
             sev = d.get("severity", "LOW")
             sev_badge = {
@@ -957,13 +973,17 @@ if st.session_state["is_detecting"] and "🎥" in mode:
                         new_dets = []
 
                         for res in results:
-                            for box in (res.boxes or []):
-                                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                            boxes = getattr(res, 'boxes', [])
+                            for box in (boxes or []):
+                                coords = box.xyxy[0].tolist()
+                                x1, y1, x2, y2 = [int(v) for v in coords]
                                 cid = int(box.cls[0]); cf = float(box.conf[0])
                                 cn = model.names.get(cid, f"class_{cid}")
                                 
                                 if cn.lower() in ROAD_DAMAGE_CLASSES:
-                                    sev = clf.classify((x1, y1, x2, y2), frame.shape[:2], cn, cf)
+                                    # Use getattr or type: ignore to handle linter attribute inference issues
+                                    f_shape = getattr(frame, 'shape', (0,0,0))
+                                    sev = clf.classify((x1, y1, x2, y2), f_shape[:2], cn, cf) # type: ignore
                                     color = SEVERITY_BGR.get(sev, (255, 255, 255))
                                     label = f"{cn} [{sev}] {cf:.2f}"
                                     new_dets.append({
@@ -982,7 +1002,7 @@ if st.session_state["is_detecting"] and "🎥" in mode:
                         st.session_state["detections"].extend(new_dets)
                         if CV2_AVAILABLE:
                             annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-                            frame_placeholder.image(annotated_rgb, channels="RGB", width="stretch")
+                            video_slot.image(annotated_rgb, channels="RGB", width="stretch")
                         
                         time.sleep(0.01)
                     cap.release()

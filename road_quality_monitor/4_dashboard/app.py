@@ -24,6 +24,13 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import cv2
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -32,22 +39,29 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "3_detection"))
 sys.path.insert(0, str(ROOT / "4_dashboard"))
 
-# ── Page configuration ──────────────────────────────────────────────────
-st.set_page_config(
-    page_title = "AI Road Quality Monitor",
-    page_icon  = "🛣️",
-    layout     = "wide",
-    initial_sidebar_state = "expanded",
-    menu_items = {
-        "Get Help":    "https://github.com/your-repo",
-        "Report a bug": None,
-        "About": (
-            "# AI Road Quality Monitoring System\n"
-            "A YOLOv8-powered real-time road damage detection dashboard.\n\n"
-            "Built as a final year engineering project."
-        ),
-    },
-)
+# ── Page configuration (wrapped for safety) ────────────────────────────
+try:
+    st.set_page_config(
+        page_title = "AI Road Quality Monitor",
+        page_icon  = "🛣️",
+        layout     = "wide",
+        initial_sidebar_state = "expanded",
+        menu_items = {
+            "Get Help":    "https://github.com/your-repo",
+            "Report a bug": None,
+            "About": (
+                "# AI Road Quality Monitoring System\n"
+                "A YOLOv8-powered real-time road damage detection dashboard.\n\n"
+                "Built as a final year engineering project."
+            ),
+        },
+    )
+except Exception:
+    pass
+
+# ── Startup Status ─────────────────────────────────────────────────────
+startup_status = st.empty()
+startup_status.info("🚀 System starting up...")
 
 # ── Custom CSS ─────────────────────────────────────────────────────────
 st.markdown("""
@@ -336,21 +350,24 @@ with col_status:
 st.markdown("<br/>", unsafe_allow_html=True)
 
 # ── Load detections based on mode ─────────────────────────────────────
-if "🎭" in mode:
-    if not st.session_state["detections"]:
-        st.session_state["detections"] = generate_demo_detections(40)
-    st.info("🎭 **Demo Mode** — Showing 40 synthetic detections. Train your model and switch to Live Detection.")
+try:
+    if "🎭" in mode:
+        if not st.session_state["detections"]:
+            st.session_state["detections"] = generate_demo_detections(40)
+        st.info("🎭 **Demo Mode** — Showing 40 synthetic detections. Train your model and switch to Live Detection.")
 
-elif "📂" in mode:
-    loaded = load_detections_from_file()
-    if loaded:
-        st.session_state["detections"] = loaded
-        st.success(f"✅ Loaded {len(loaded)} detections from previous session.")
-    else:
-        st.warning("⚠️  No previous detections found. Run the real-time detector first.")
-        st.code("python 3_detection/realtime_detection.py --source 0")
+    elif "📂" in mode:
+        loaded = load_detections_from_file()
+        if loaded:
+            st.session_state["detections"] = loaded
+            st.success(f"✅ Loaded {len(loaded)} detections from previous session.")
+        else:
+            st.warning("⚠️  No previous detections found. Run the real-time detector first.")
+            st.code("python 3_detection/realtime_detection.py --source 0")
+except Exception as e:
+    st.error(f"Error loading detections: {e}")
 
-detections = st.session_state["detections"]
+detections = st.session_state.get("detections", [])
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -585,31 +602,29 @@ with tab1:
 
         else:
             # ── Static demo frame ──────────────────────────────────────
+            # Use a slightly lighter background so it's not a "black screen"
             demo_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-            demo_frame[:] = (22, 27, 34)
-            cv2.putText(demo_frame, "Video Feed Placeholder",
-                        (140, 220), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (88, 166, 255), 2)
-            cv2.putText(demo_frame, "Click 'Start Detection' to begin",
+            demo_frame[:] = (30, 35, 45) # Dark blue-grey
+            cv2.putText(demo_frame, "Road Monitor - IDLE",
+                        (180, 220), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (88, 166, 255), 2)
+            cv2.putText(demo_frame, "Click 'Start Detection' to activate feed",
                         (110, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (139, 148, 158), 1)
-            cv2.putText(demo_frame, "(Switch to Live Detection mode)",
-                        (130, 300), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (63, 185, 80), 1)
 
             # Draw sample bounding boxes for illustration
             sample_boxes = [
                 ((80,  180, 200, 280), "pothole [HIGH]",   (0, 0, 220)),
                 ((300, 100, 500, 200), "crack [MEDIUM]",   (0, 165, 255)),
-                ((420, 280, 580, 360), "wear [LOW]",       (50, 200, 50)),
             ]
             for (x1,y1,x2,y2), label, color in sample_boxes:
                 cv2.rectangle(demo_frame, (x1,y1), (x2,y2), color, 2)
                 cv2.putText(demo_frame, label, (x1, y1-6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
             frame_placeholder.image(
                 cv2.cvtColor(demo_frame, cv2.COLOR_BGR2RGB),
                 channels            = "RGB",
                 use_container_width = True,
-                caption             = "🎬 Demo frame — Switch to Live Detection mode for real detection"
+                caption             = "🎬 Dashboard active — Ready to start monitoring"
             )
 
     # ── RIGHT: Map ────────────────────────────────────────────────────
@@ -649,12 +664,11 @@ with tab2:
     # ══════════════════════════════════════════════════════════════════
     st.markdown('<div class="section-header">📊 Detection Analytics</div>', unsafe_allow_html=True)
 
-    if not detections:
+    if not PLOTLY_AVAILABLE:
+        st.error("Plotly is not installed. Please check requirements.txt.")
+    elif not detections:
         st.info("No detections yet to analyze.")
     else:
-        import plotly.express as px
-        import plotly.graph_objects as go
-
         df = pd.DataFrame(detections)
 
         chart1, chart2 = st.columns(2)

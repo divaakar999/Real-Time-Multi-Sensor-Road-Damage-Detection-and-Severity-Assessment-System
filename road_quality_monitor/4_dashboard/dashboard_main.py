@@ -83,6 +83,16 @@ def get_yolo_model(path):
     from ultralytics import YOLO
     return YOLO(str(path))
 
+@st.cache_resource
+def get_severity_classifier():
+    from severity_classifier import SeverityClassifier
+    return SeverityClassifier()
+
+@st.cache_resource
+def get_gps_tagger():
+    from gps_tagger import GPSTagger
+    return GPSTagger()
+
 # ── Damage Classes ─────────────────────────────────────────────────────
 ROAD_DAMAGE_CLASSES = {
     "pothole", "crack", "wear",
@@ -523,162 +533,90 @@ st.markdown("<br/>", unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  MAIN CONTENT: VIDEO FEED + MAP (side by side)
+#  MAIN CONTENT: VIDEO FEED + MAP (Always Visible for Stability)
 # ══════════════════════════════════════════════════════════════════════
-tab1, tab2, tab3, tab4 = st.tabs(["🎥 Live Feed & Map", "📊 Analytics", "📋 Detection Log", "📁 Reports"])
+col_v, col_m = st.columns([1.1, 0.9])
 
-with tab1:
-    left_col, right_col = st.columns([1, 1])
+with col_v:
+    st.markdown('<div class="section-header">📹 Real-Time Detection Feed</div>', unsafe_allow_html=True)
+    frame_placeholder = st.empty()
+    
+    # Control buttons
+    btn_col1, btn_col2, btn_col3 = st.columns(3)
+    with btn_col1:
+        start_btn = st.button("▶ Start Detection", type="primary", width="stretch", disabled=st.session_state["is_detecting"])
+    with btn_col2:
+        stop_btn = st.button("⏹ Stop", width="stretch", disabled=not st.session_state["is_detecting"])
+    with btn_col3:
+        clear_btn = st.button("🗑 Clear Data", width="stretch")
 
-    # ── LEFT: Video Feed ─────────────────────────────────────────────
-    with left_col:
-        st.markdown('<div class="section-header">📹 Video Feed</div>', unsafe_allow_html=True)
+    if clear_btn:
+        st.session_state["detections"] = []
+        st.rerun()
 
-        frame_placeholder = st.empty()
+    if start_btn: st.session_state["is_detecting"] = True
+    if stop_btn:  st.session_state["is_detecting"] = False
 
-        # ── Control buttons ──────────────────────────────────────────
-        btn_col1, btn_col2, btn_col3 = st.columns(3)
-        with btn_col1:
-            start_btn = st.button(
-                "▶ Start Detection",
-                type      = "primary",
-                width = "stretch",
-                disabled  = st.session_state["is_detecting"],
-            )
-        with btn_col2:
-            stop_btn = st.button(
-                "⏹ Stop",
-                width = "stretch",
-                disabled  = not st.session_state["is_detecting"],
-            )
-        with btn_col3:
-            clear_btn = st.button("🗑 Clear Data", width="stretch")
-
-        if clear_btn:
-            st.session_state["detections"] = []
-            st.rerun()
-
-        # ── Live detection loop ──────────────────────────────────────
-        if start_btn:
-            st.session_state["is_detecting"] = True
-
-        if stop_btn:
-            st.session_state["is_detecting"] = False
-
-        # ── Show demo frame or live feed ─────────────────────────────
-        if st.session_state["is_detecting"] and "🎥" in mode:
-            # ── BRANCH: WebRTC (Mobile) vs Local ───────────────────────────
-            if video_source == "webrtc":
-                if not WEBRTC_AVAILABLE:
-                    st.error("⚠️ Browser Camera (WebRTC) is not available. Please check dependencies.")
-                    st.session_state["is_detecting"] = False
-                else:
-                    st.info("📱 **Browser Camera Active** — Detection is running on your device's stream.")
-                    weights = ROOT / "weights" / "best.pt"
-                    # Pre-load to avoid timeout in component factory
-                    with st.spinner("🧠 Loading AI Model..."):
-                        model_inst = get_yolo_model(weights)
-                        clf_inst   = SeverityClassifier()
-                        gps_inst   = GPSTagger()
-                    
-                    ctx = webrtc_streamer(
-                        key="road-monitor-webrtc-v2", # Changed key for fresh reload
-                        mode=WebRtcMode.SENDRECV,
-                        rtc_configuration=RTCConfiguration({
-                            "iceServers": [
-                                {"urls": ["stun:stun.l.google.com:19302"]},
-                                {"urls": ["stun:stun1.l.google.com:19302"]},
-                                {"urls": ["stun:stun2.l.google.com:19302"]},
-                                {"urls": ["stun:stun3.l.google.com:19302"]},
-                                {"urls": ["stun:stun4.l.google.com:19302"]},
-                            ]
-                        }),
-                        media_stream_constraints={"video": True, "audio": False},
-                        video_processor_factory=lambda: RoadDamageProcessor(
-                            model_inst, clf_inst, gps_inst,
-                            conf_threshold, iou_threshold, ROAD_DAMAGE_CLASSES
-                        ),
-                        async_processing=True,
-                    )
-                    # Sync detections back to main state
-                    if ctx and ctx.video_processor:
-                        new_ones = list(ctx.video_processor.new_detections)
-                        if new_ones:
-                            st.session_state["detections"].extend(new_ones)
-                            ctx.video_processor.new_detections = []
-                            # Pulse limit
-                            if len(st.session_state["detections"]) > 500:
-                                st.session_state["detections"] = st.session_state["detections"][-500:]
+    # Video Render Logic
+    if st.session_state["is_detecting"] and "🎥" in mode:
+        if video_source == "webrtc":
+            if not WEBRTC_AVAILABLE:
+                st.error("⚠️ WebRTC not available.")
             else:
-                # ── BRANCH: Local Hardware / File ───────────────────────────
-                # NOTE: The loop logic is at the very bottom of the script
-                # to prevent blocking UI rendering.
-                st.info("💡 **Ready to Start** — Live feed will appear below.")
-                st.spinner("🔄 Initializing camera/stream...")
-
-        else:
-            # ── Static demo frame (IDLE) ────────────────────────────────
-            if CV2_AVAILABLE:
-                demo_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-                demo_frame[:] = (30, 35, 45) # Dark blue-grey
-                cv2.putText(demo_frame, "Road Monitor - IDLE",
-                            (180, 220), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (88, 166, 255), 2)
-                cv2.putText(demo_frame, "Click 'Start Detection' to activate feed",
-                            (110, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (139, 148, 158), 1)
-
-                # Draw sample bounding boxes for illustration
-                sample_boxes = [
-                    ((80,  180, 200, 280), "pothole [HIGH]",   (0, 0, 220)),
-                    ((300, 100, 500, 200), "crack [MEDIUM]",   (0, 165, 255)),
-                ]
-                for (x1,y1,x2,y2), label, color in sample_boxes:
-                    cv2.rectangle(demo_frame, (x1,y1), (x2,y2), color, 2)
-                    cv2.putText(demo_frame, label, (x1, y1-6),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-
-                frame_placeholder.image(
-                    cv2.cvtColor(demo_frame, cv2.COLOR_BGR2RGB),
-                    channels            = "RGB",
-                    width = "stretch",
-                    caption             = "🎬 Dashboard active — Ready to start monitoring"
+                with st.spinner("🧠 Initializing AI Engine..."):
+                    weights_path = ROOT / "weights" / "best.pt"
+                    model_inst = get_yolo_model(weights_path)
+                    clf_inst   = get_severity_classifier()
+                    gps_inst   = get_gps_tagger()
+                
+                ctx = webrtc_streamer(
+                    key="road-monitor-persistent-v3", 
+                    mode=WebRtcMode.SENDRECV,
+                    rtc_configuration=RTCConfiguration({
+                        "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}, {"urls": ["stun:stun1.l.google.com:19302"]}]
+                    }),
+                    media_stream_constraints={"video": True, "audio": False},
+                    video_processor_factory=lambda: RoadDamageProcessor(
+                        model_inst, clf_inst, gps_inst,
+                        conf_threshold, iou_threshold, ROAD_DAMAGE_CLASSES
+                    ),
+                    async_processing=True,
                 )
-            else:
-                st.warning("⚠️ **OpenCV not available.** Visualization restricted.")
-                st.info("The system is running in headless/restricted mode. Live video processing requires OpenCV.")
-                frame_placeholder.info("📽️ Waiting for input source...")
-
-    # ── RIGHT: Map ────────────────────────────────────────────────────
-    with right_col:
-        st.markdown('<div class="section-header">🗺️ Damage Location Map</div>', unsafe_allow_html=True)
-
-        if detections:
-            try:
-                from map_component import build_damage_map
-                import streamlit_folium as stf
-
-                fmap = build_damage_map(
-                    detections   = detections,
-                    show_heatmap = show_heatmap,
-                    show_route   = show_route,
-                    tile_style   = map_tile,
-                )
-                stf.folium_static(fmap, width=660, height=460)
-
-            except ImportError:
-                # Fallback if streamlit-folium not installed
-                st.warning("Install `streamlit-folium` for map: `pip install streamlit-folium`")
-                lats = [d["gps"]["lat"] for d in detections if "gps" in d]
-                lons = [d["gps"]["lon"] for d in detections if "gps" in d]
-                df   = pd.DataFrame({"lat": lats, "lon": lons})
-                st.map(df)
+                if ctx and ctx.video_processor:
+                    new_ones = list(ctx.video_processor.new_detections)
+                    if new_ones:
+                        st.session_state["detections"].extend(new_ones)
+                        ctx.video_processor.new_detections = []
+                        if len(st.session_state["detections"]) > 500:
+                            st.session_state["detections"] = st.session_state["detections"][-500:]
         else:
-            st.info("📍 No detections yet. Start detection or switch to Demo Mode to see location data.")
-            # Show blank world map region
-            blank_df = pd.DataFrame({"lat": [12.9716], "lon": [77.5946]})
-            st.map(blank_df)
+            st.info("💡 **Detection Active** — Processing source...")
+    else:
+        # IDLE Frame
+        if CV2_AVAILABLE:
+            demo_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            demo_frame[:] = (30, 35, 45)
+            cv2.putText(demo_frame, "SYSTEM IDLE", (220, 240), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (88, 166, 255), 2)
+            frame_placeholder.image(cv2.cvtColor(demo_frame, cv2.COLOR_BGR2RGB), channels="RGB", width="stretch")
 
+with col_m:
+    st.markdown('<div class="section-header">🗺️ Live Damage Map</div>', unsafe_allow_html=True)
+    if detections:
+        try:
+            from map_component import build_damage_map
+            import streamlit_folium as stf
+            fmap = build_damage_map(detections, show_heatmap, show_route, map_tile)
+            stf.folium_static(fmap, width=660, height=450)
+        except Exception:
+            st.map(pd.DataFrame([{"lat": d["gps"]["lat"], "lon": d["gps"]["lon"]} for d in detections if "gps" in d]))
+    else:
+        st.info("📍 Waiting for detections...")
+        st.map(pd.DataFrame([{"lat": 12.9716, "lon": 77.5946}]))
 
-with tab2:
+st.markdown("<br/>", unsafe_allow_html=True)
+t1, t2, t3 = st.tabs(["📊 Analytics", "📋 Detection Log", "📁 Reports"])
+
+with t1:
     # ══════════════════════════════════════════════════════════════════
     #  ANALYTICS TAB
     # ══════════════════════════════════════════════════════════════════
@@ -809,7 +747,7 @@ with tab2:
                 st.plotly_chart(fig_line, width="stretch")
 
 
-with tab3:
+with t2:
     # ══════════════════════════════════════════════════════════════════
     #  DETECTION LOG TAB
     # ══════════════════════════════════════════════════════════════════
@@ -845,8 +783,8 @@ with tab3:
 
         # Build display DataFrame
         rows = []
-        reversed_filtered = list(filtered)[::-1]
-        for d in reversed_filtered[:100]:   # Last 100
+        rev_filtered = list(filtered)[::-1]
+        for d in rev_filtered[:100]:   # Last 100
             gps = d.get("gps", {})
             sev = d.get("severity", "LOW")
             sev_badge = {
@@ -871,7 +809,7 @@ with tab3:
         )
 
 
-with tab4:
+with t3:
     # ══════════════════════════════════════════════════════════════════
     #  REPORTS TAB
     # ══════════════════════════════════════════════════════════════════

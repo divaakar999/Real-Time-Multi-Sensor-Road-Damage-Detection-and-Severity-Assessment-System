@@ -26,17 +26,28 @@ import streamlit as st
 from pathlib import Path
 from datetime import datetime, timedelta
 
+# ── Page configuration (MUST BE FIRST) ────────────────────────────────
+try:
+    st.set_page_config(
+        page_title = "AI Road Quality Monitor",
+        page_icon  = "🛣️",
+        layout     = "wide",
+        initial_sidebar_state = "expanded",
+    )
+except Exception:
+    pass
+
 # ── NumPy 2.x Safety Check ───────────────────────────────────────────
 if np.__version__.startswith("2."):
     st.error(f"❌ **NumPy 2.x detected ({np.__version__})**")
-    st.markdown("""
-        **Crucial:** NumPy 2.0 is currently incompatible with the pre-compiled YOLOv8 and OpenCV binaries 
-        used in this project. This is the cause of the **Black Screen** issue.
+    st.markdown(f"""
+        **Critical Compatibility Issue:** Your current environment is running NumPy {np.__version__}. 
+        This version is incompatible with the pre-compiled YOLOv8 and OpenCV binaries, 
+        resulting in a **Black Screen** during detection.
         
-        **How to fix:**
-        1. Click the **three dots** ⋮ in the top right of your Streamlit app.
-        2. Select **Settings** → **Reboot App**.
-        3. The root `requirements.txt` has been updated to pin `numpy<2.0.0`.
+        **Immediate Resolution:**
+        1. Click the **three dots** ⋮ (top right) → **Settings** → **Reboot App**.
+        2. Verify that the root `requirements.txt` contains `numpy<2.0.0`.
     """)
     st.stop()
 
@@ -93,39 +104,47 @@ if WEBRTC_AVAILABLE:
             self.new_detections = []
 
         def recv(self, frame):
-            img = frame.to_ndarray(format="bgr24")
-            h, w = img.shape[:2]
-            results = self.model.predict(img, conf=self.conf, iou=self.iou, verbose=False)
-            
-            annotated = img.copy()
-            SEVERITY_BGR = {"HIGH": (0, 0, 220), "MEDIUM": (0, 165, 255), "LOW": (50, 200, 50)}
-            
-            for res in results:
-                for box in (res.boxes or []):
-                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                    cid = int(box.cls[0])
-                    cf  = float(box.conf[0])
-                    cn  = self.model.names.get(cid, f"class_{cid}")
-                    
-                    if cn.lower() in self.road_classes:
-                        sev   = self.clf.classify((x1, y1, x2, y2), (h, w), cn, cf)
-                        color = SEVERITY_BGR.get(sev, (255, 255, 255))
-                        label = f"{cn} [{sev}] {cf:.2f}"
-                        self.new_detections.append({
-                            "class": cn, "confidence": cf, "severity": sev,
-                            "bbox": [x1, y1, x2, y2], "gps": self.gps.get_current(),
-                            "timestamp": datetime.now().isoformat()
-                        })
-                    else:
-                        color = (180, 180, 180)
-                        label = f"{cn} {cf:.2f}"
+            try:
+                img = frame.to_ndarray(format="bgr24")
+                h, w = img.shape[:2]
+                
+                # Run prediction
+                results = self.model.predict(img, conf=self.conf, iou=self.iou, verbose=False)
+                annotated = img.copy()
+                SEVERITY_BGR = {"HIGH": (0, 0, 220), "MEDIUM": (0, 165, 255), "LOW": (50, 200, 50)}
+                
+                for res in results:
+                    if not res.boxes: continue
+                    for box in res.boxes:
+                        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                        cid = int(box.cls[0])
+                        cf  = float(box.conf[0])
+                        cn  = self.model.names.get(cid, f"class_{cid}")
+                        
+                        if cn.lower() in self.road_classes:
+                            sev   = self.clf.classify((x1, y1, x2, y2), (h, w), cn, cf)
+                            color = SEVERITY_BGR.get(sev, (255, 255, 255))
+                            label = f"{cn} [{sev}] {cf:.2f}"
+                            
+                            # Log detection
+                            self.new_detections.append({
+                                "class": cn, "confidence": cf, "severity": sev,
+                                "bbox": [x1, y1, x2, y2], "gps": self.gps.get_current(),
+                                "timestamp": datetime.now().isoformat()
+                            })
+                        else:
+                            color = (180, 180, 180)
+                            label = f"{cn} {cf:.2f}"
 
-                    if CV2_AVAILABLE:
-                        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-                        cv2.putText(annotated, label, (x1, max(y1-6, 14)), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-            
-            return av.VideoFrame.from_ndarray(annotated, format="bgr24")
+                        if CV2_AVAILABLE:
+                            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+                            cv2.putText(annotated, label, (x1, max(y1-6, 14)), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                
+                return av.VideoFrame.from_ndarray(annotated, format="bgr24")
+            except Exception as e:
+                # Return original frame on error to prevent black screen
+                return frame
 else:
     class RoadDamageProcessor:
         def __init__(self, *args, **kwargs):
@@ -133,25 +152,7 @@ else:
         def recv(self, frame):
             return frame
 
-# ── Page configuration (wrapped for safety) ────────────────────────────
-try:
-    st.set_page_config(
-        page_title = "AI Road Quality Monitor",
-        page_icon  = "🛣️",
-        layout     = "wide",
-        initial_sidebar_state = "expanded",
-        menu_items = {
-            "Get Help":    "https://github.com/your-repo",
-            "Report a bug": None,
-            "About": (
-                "# AI Road Quality Monitoring System\n"
-                "A YOLOv8-powered real-time road damage detection dashboard.\n\n"
-                "Built as a final year engineering project."
-            ),
-        },
-    )
-except Exception:
-    pass
+# ── WebRTC Video Processor (Guarded) ───────────────────────────────────
 
 # ── Startup Status ─────────────────────────────────────────────────────
 startup_status = st.empty()
@@ -540,17 +541,17 @@ with tab1:
             start_btn = st.button(
                 "▶ Start Detection",
                 type      = "primary",
-                width     = "stretch",
+                use_container_width = True,
                 disabled  = st.session_state["is_detecting"],
             )
         with btn_col2:
             stop_btn = st.button(
                 "⏹ Stop",
-                width     = "stretch",
+                use_container_width = True,
                 disabled  = not st.session_state["is_detecting"],
             )
         with btn_col3:
-            clear_btn = st.button("🗑 Clear Data", width="stretch")
+            clear_btn = st.button("🗑 Clear Data", use_container_width=True)
 
         if clear_btn:
             st.session_state["detections"] = []
@@ -576,7 +577,15 @@ with tab1:
                     ctx = webrtc_streamer(
                         key="road-monitor-webrtc",
                         mode=WebRtcMode.SENDRECV,
-                        rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
+                        rtc_configuration=RTCConfiguration({
+                            "iceServers": [
+                                {"urls": ["stun:stun.l.google.com:19302"]},
+                                {"urls": ["stun:stun1.l.google.com:19302"]},
+                                {"urls": ["stun:stun2.l.google.com:19302"]},
+                                {"urls": ["stun:stun3.l.google.com:19302"]},
+                                {"urls": ["stun:stun4.l.google.com:19302"]},
+                            ]
+                        }),
                         video_processor_factory=lambda: RoadDamageProcessor(
                             get_yolo_model(weights), SeverityClassifier(), GPSTagger(),
                             conf_threshold, iou_threshold, ROAD_DAMAGE_CLASSES
@@ -617,7 +626,7 @@ with tab1:
                 frame_placeholder.image(
                     cv2.cvtColor(demo_frame, cv2.COLOR_BGR2RGB),
                     channels            = "RGB",
-                    width               = "stretch",
+                    use_container_width = True,
                     caption             = "🎬 Dashboard active — Ready to start monitoring"
                 )
             else:
@@ -689,7 +698,7 @@ with tab2:
                 margin=dict(l=0, r=0, t=40, b=0),
             )
             fig_pie.update_traces(textinfo="percent+value", textfont_color="white")
-            st.plotly_chart(fig_pie, width="stretch")
+            st.plotly_chart(fig_pie, use_container_width=True)
 
         with chart2:
             # ── Damage Class Bar Chart ─────────────────────────────────
@@ -711,7 +720,7 @@ with tab2:
                 yaxis=dict(gridcolor="#30363d"),
             )
             fig_bar.update_traces(textposition="outside", textfont_color="#e6edf3")
-            st.plotly_chart(fig_bar, width="stretch")
+            st.plotly_chart(fig_bar, use_container_width=True)
 
         chart3, chart4 = st.columns(2)
 
@@ -735,7 +744,7 @@ with tab2:
                 xaxis=dict(gridcolor="#30363d"),
                 yaxis=dict(gridcolor="#30363d", title="Count"),
             )
-            st.plotly_chart(fig_hist, width="stretch")
+            st.plotly_chart(fig_hist, use_container_width=True)
 
         with chart4:
             # ── Severity × Class Heatmap ────────────────────────────────
@@ -760,7 +769,7 @@ with tab2:
                 font_color    = "#e6edf3", title_font_size=14,
                 margin        = dict(l=0, r=0, t=40, b=0),
             )
-            st.plotly_chart(fig_heat, width="stretch")
+            st.plotly_chart(fig_heat, use_container_width=True)
 
         # ── Time-series line chart ─────────────────────────────────────
         if "timestamp" in df.columns and df["timestamp"].notna().any():
@@ -784,7 +793,7 @@ with tab2:
                     yaxis=dict(gridcolor="#30363d"),
                     legend_title="Severity",
                 )
-                st.plotly_chart(fig_line, width="stretch")
+                st.plotly_chart(fig_line, use_container_width=True)
 
 
 with tab3:
@@ -843,7 +852,7 @@ with tab3:
 
         st.dataframe(
             pd.DataFrame(rows),
-            width               = "stretch",
+            use_container_width  = True,
             height              = 400,
         )
 
@@ -873,7 +882,7 @@ with tab4:
         route_name = st.text_input("Route / Road Name", "MG Road, Bangalore")
         inspector  = st.text_input("Inspector Name",    "AI Monitoring System")
 
-        if st.button("📄 Generate PDF Report", width="stretch", type="primary"):
+        if st.button("📄 Generate PDF Report", use_container_width=True, type="primary"):
             if not detections:
                 st.warning("No detections to report yet.")
             else:
@@ -891,7 +900,7 @@ with tab4:
                             data         = pdf_bytes,
                             file_name    = f"road_report_{ts}.pdf",
                             mime         = "application/pdf",
-                            width        = "stretch",
+                            use_container_width = True,
                         )
                         st.success("✅ PDF ready for download!")
                     except Exception as e:
@@ -912,7 +921,7 @@ with tab4:
 
         st.markdown("<br/>", unsafe_allow_html=True)
 
-        if st.button("📊 Generate CSV Report", width="stretch"):
+        if st.button("📊 Generate CSV Report", use_container_width=True):
             if not detections:
                 st.warning("No detections to export yet.")
             else:
@@ -926,7 +935,7 @@ with tab4:
                             data         = csv_bytes,
                             file_name    = f"road_detections_{ts}.csv",
                             mime         = "text/csv",
-                            width        = "stretch",
+                            use_container_width = True,
                         )
                         st.success("✅ CSV ready for download!")
                     except Exception as e:
@@ -1021,7 +1030,7 @@ if st.session_state["is_detecting"] and "🎥" in mode:
                         st.session_state["detections"].extend(new_dets)
                         if CV2_AVAILABLE:
                             annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-                            frame_placeholder.image(annotated_rgb, channels="RGB", width="stretch")
+                            frame_placeholder.image(annotated_rgb, channels="RGB", use_container_width=True)
                         
                         time.sleep(0.01)
                     cap.release()

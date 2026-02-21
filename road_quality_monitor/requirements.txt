@@ -3,12 +3,12 @@
 # Install with: pip install -r requirements.txt
 # ============================================================
 
-# Core Deep Learning - YOLOv8
-ultralytics>=8.0.0          # YOLOv8 framework (includes PyTorch)
+# Computer Vision first (ensures headless)
+opencv-python-headless>=4.8.0 
+Pillow>=10.0.0
 
-# Computer Vision
-opencv-python-headless>=4.8.0 # Real-time video capture & processing (Headless for Cloud)
-Pillow>=10.0.0               # Image manipulation
+# Core Deep Learning - YOLOv8
+ultralytics>=8.0.0
 
 # Data Science & Evaluation
 numpy>=1.24.0

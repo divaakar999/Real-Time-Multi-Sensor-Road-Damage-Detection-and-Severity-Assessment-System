@@ -17,6 +17,7 @@ import random
 from pathlib import Path
 from datetime import datetime, timezone
 from dataclasses import dataclass, asdict
+from typing import List, Dict, Optional, Any, Union
 
 
 @dataclass
@@ -32,7 +33,16 @@ class GPSPoint:
     source:    str    # "gps", "network", or "simulated"
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {
+            "lat":       self.lat,
+            "lon":       self.lon,
+            "alt":       self.alt,
+            "speed":     self.speed,
+            "heading":   self.heading,
+            "accuracy":  self.accuracy,
+            "timestamp": self.timestamp,
+            "source":    self.source,
+        }
 
     def to_geojson(self) -> dict:
         """Return as GeoJSON Point feature."""
@@ -95,12 +105,12 @@ class GPSSimulator:
         jitter_heading = self.heading + random.gauss(0, 2.0)
 
         return GPSPoint(
-            lat       = round(lat, 7),
-            lon       = round(lon, 7),
-            alt       = 920.0 + random.gauss(0, 0.5),  # Bangalore altitude ~920m
-            speed     = self.speed + random.gauss(0, 2.0),
-            heading   = round(jitter_heading % 360, 1),
-            accuracy  = round(abs(random.gauss(3.0, 1.0)), 1),
+            lat       = round(float(lat), 7),
+            lon       = round(float(lon), 7),
+            alt       = float(920.0 + random.gauss(0, 0.5)),
+            speed     = float(self.speed + random.gauss(0, 2.0)),
+            heading   = round(float(jitter_heading % 360), 1),
+            accuracy  = round(float(abs(random.gauss(3.0, 1.0))), 1),
             timestamp = datetime.now(timezone.utc).isoformat(),
             source    = "simulated",
         )
@@ -131,18 +141,18 @@ class RealGPS:
         except Exception as e:
             print(f"⚠️  gpsd not available ({e}). Falling back to simulated GPS.")
 
-    def get(self) -> GPSPoint:
-        if not self._connected:
+    def get(self) -> Optional[GPSPoint]:
+        if not self._connected or self._gpsd is None:
             return None
         try:
             packet = self._gpsd.get_current()
             return GPSPoint(
-                lat       = round(packet.lat, 7),
-                lon       = round(packet.lon, 7),
-                alt       = round(packet.alt, 1) if packet.alt else 0.0,
-                speed     = round(packet.speed() * 3.6, 1),   # m/s → km/h
-                heading   = round(packet.movement().get("track", 0.0), 1),
-                accuracy  = round(packet.position_precision()[0], 1),
+                lat       = round(float(packet.lat), 7),
+                lon       = round(float(packet.lon), 7),
+                alt       = round(float(packet.alt), 1) if packet.alt else 0.0,
+                speed     = round(float(packet.speed() * 3.6), 1),
+                heading   = round(float(packet.movement().get("track", 0.0)), 1),
+                accuracy  = round(float(packet.position_precision()[0]), 1),
                 timestamp = datetime.now(timezone.utc).isoformat(),
                 source    = "gps",
             )
@@ -168,12 +178,13 @@ class GPSTagger:
         start_lon:    float = 77.59460,
     ):
         self._simulator = GPSSimulator(start_lat, start_lon)
-        self._real_gps  = None
+        self._real_gps: Optional[RealGPS] = None
         self._use_real  = use_real_gps
 
         if use_real_gps:
-            self._real_gps = RealGPS()
-            if not self._real_gps._connected:
+            real = RealGPS()
+            self._real_gps = real
+            if not real._connected:
                 self._use_real = False
                 print("   Using simulated GPS as fallback.")
 
@@ -182,16 +193,19 @@ class GPSTagger:
 
     def get_current(self) -> dict:
         """Get current GPS position as a plain dict (JSON-serialisable)."""
-        if self._use_real and self._real_gps:
-            point = self._real_gps.get()
-            if point:
-                self._history.append(point.to_dict())
-                return point.to_dict()
+        real_gps = self._real_gps
+        if self._use_real and real_gps is not None:
+            point = real_gps.get()
+            if point is not None:
+                p_dict = point.to_dict()
+                self._history.append(p_dict)
+                return p_dict
 
         # ── Fall back to simulator ─────────────────────────────────────
-        point = self._simulator.get()
-        self._history.append(point.to_dict())
-        return point.to_dict()
+        point_sim = self._simulator.get()
+        p_dict_sim = point_sim.to_dict()
+        self._history.append(p_dict_sim)
+        return p_dict_sim
 
     def get_track(self) -> list[dict]:
         """Return the full GPS track (all logged positions) as a list."""
@@ -203,15 +217,18 @@ class GPSTagger:
             "type": "FeatureCollection",
             "features": []
         }
+        features = []
         for point_dict in self._history:
-            geojson["features"].append({
+            if not isinstance(point_dict, dict): continue
+            features.append({
                 "type":     "Feature",
                 "geometry": {
                     "type":        "Point",
-                    "coordinates": [point_dict["lon"], point_dict["lat"]],
+                    "coordinates": [point_dict.get("lon", 0), point_dict.get("lat", 0)],
                 },
                 "properties": point_dict,
             })
+        geojson["features"] = features
 
         with open(self._log_path, "w") as f:
             json.dump(geojson, f, indent=2)
@@ -237,7 +254,7 @@ class GPSTagger:
         a = (math.sin(dlat / 2) ** 2 +
              math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2)
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-        return round(R * c, 2)
+        return round(float(R * c), 2)
 
     @staticmethod
     def reverse_geocode(lat: float, lon: float) -> str:

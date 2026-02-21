@@ -143,7 +143,8 @@ if WEBRTC_AVAILABLE:
                 
                 return av.VideoFrame.from_ndarray(annotated, format="bgr24")
             except Exception as e:
-                # Return original frame on error to prevent black screen
+                # Log to terminal for debugging
+                print(f"ERROR in WebRTC recv: {e}")
                 return frame
 else:
     class RoadDamageProcessor:
@@ -320,15 +321,15 @@ def generate_demo_detections(n: int = 30) -> list:
         dets.append({
             "frame":      i * 5,
             "class":      cls,
-            "confidence": round(conf, 3),
+            "confidence": round(float(conf), 3),
             "severity":   sev,
             "bbox":       [random.randint(100, 400), random.randint(100, 300),
                            random.randint(400, 640), random.randint(300, 480)],
             "gps": {
-                "lat":       round(base_lat + dist * math.cos(angle), 6),
-                "lon":       round(base_lon + dist * math.sin(angle), 6),
+                "lat":       round(float(base_lat + dist * math.cos(angle)), 6),
+                "lon":       round(float(base_lon + dist * math.sin(angle)), 6),
                 "alt":       920.0,
-                "speed":     round(random.uniform(20, 50), 1),
+                "speed":     round(float(random.uniform(20, 50)), 1),
                 "source":    "simulated",
             },
             "timestamp": (datetime.now() - timedelta(seconds=n - i)).isoformat(),
@@ -574,8 +575,14 @@ with tab1:
                 else:
                     st.info("📱 **Browser Camera Active** — Detection is running on your device's stream.")
                     weights = ROOT / "weights" / "best.pt"
+                    # Pre-load to avoid timeout in component factory
+                    with st.spinner("🧠 Loading AI Model..."):
+                        model_inst = get_yolo_model(weights)
+                        clf_inst   = SeverityClassifier()
+                        gps_inst   = GPSTagger()
+                    
                     ctx = webrtc_streamer(
-                        key="road-monitor-webrtc",
+                        key="road-monitor-webrtc-v2", # Changed key for fresh reload
                         mode=WebRtcMode.SENDRECV,
                         rtc_configuration=RTCConfiguration({
                             "iceServers": [
@@ -586,16 +593,22 @@ with tab1:
                                 {"urls": ["stun:stun4.l.google.com:19302"]},
                             ]
                         }),
+                        media_stream_constraints={"video": True, "audio": False},
                         video_processor_factory=lambda: RoadDamageProcessor(
-                            get_yolo_model(weights), SeverityClassifier(), GPSTagger(),
+                            model_inst, clf_inst, gps_inst,
                             conf_threshold, iou_threshold, ROAD_DAMAGE_CLASSES
                         ),
                         async_processing=True,
                     )
                     # Sync detections back to main state
-                    if ctx.video_processor and len(ctx.video_processor.new_detections) > 0:
-                        st.session_state["detections"].extend(ctx.video_processor.new_detections)
-                        ctx.video_processor.new_detections = []
+                    if ctx and ctx.video_processor:
+                        new_ones = list(ctx.video_processor.new_detections)
+                        if new_ones:
+                            st.session_state["detections"].extend(new_ones)
+                            ctx.video_processor.new_detections = []
+                            # Pulse limit
+                            if len(st.session_state["detections"]) > 500:
+                                st.session_state["detections"] = st.session_state["detections"][-500:]
             else:
                 # ── BRANCH: Local Hardware / File ───────────────────────────
                 # NOTE: The loop logic is at the very bottom of the script
@@ -694,8 +707,8 @@ with tab2:
             fig_pie.update_layout(
                 paper_bgcolor="#1c2128", plot_bgcolor="#1c2128",
                 font_color="#e6edf3", title_font_size=14,
-                legend=dict(orientation="v", x=1.0, y=0.5),
-                margin=dict(l=0, r=0, t=40, b=0),
+                legend={"orientation": "v", "x": 1.0, "y": 0.5},
+                margin={"l": 0, "r": 0, "t": 40, "b": 0},
             )
             fig_pie.update_traces(textinfo="percent+value", textfont_color="white")
             st.plotly_chart(fig_pie, use_container_width=True)
@@ -832,7 +845,8 @@ with tab3:
 
         # Build display DataFrame
         rows = []
-        for d in filtered[-100:]:   # Last 100
+        reversed_filtered = list(filtered)[::-1]
+        for d in reversed_filtered[:100]:   # Last 100
             gps = d.get("gps", {})
             sev = d.get("severity", "LOW")
             sev_badge = {

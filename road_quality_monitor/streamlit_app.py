@@ -1,21 +1,27 @@
-# =======================================================================
-# STREAMLIT CLOUD ENTRY POINT
-# =======================================================================
-# Streamlit Cloud looks for `streamlit_app.py` in the root directory by default.
-# This simple wrapper imports and runs the actual dashboard code from the
-# 4_dashboard folder, ensuring all paths and dependencies resolve correctly.
-
 import sys
+import os
 from pathlib import Path
 
-# Add the 4_dashboard directory to Python's path so we can import app.py
-dashboard_dir = Path(__file__).parent / "4_dashboard"
-sys.path.insert(0, str(dashboard_dir))
+# =======================================================================
+# AI Road Quality Monitoring System - Entry Point
+# =======================================================================
 
-# Import the main dashboard app
-import app
+# Get absolute path to this file
+ROOT = Path(__file__).resolve().parent
 
-# Run the dashboard's main loop
-if __name__ == "__main__":
-    if hasattr(app, "main"):
-        app.main()
+# Add directories to sys.path to ensure modules are found
+sys.path.append(str(ROOT))
+sys.path.append(str(ROOT / "3_detection"))
+sys.path.append(str(ROOT / "4_dashboard"))
+
+# Streamlit Cloud sometimes has issues with imports named 'app'
+# We renamed 4_dashboard/app.py -> 4_dashboard/dashboard_main.py
+try:
+    from dashboard_main import *
+except ImportError:
+    # If using absolute imports
+    from road_quality_monitor.main_dashboard import *
+except Exception as e:
+    import streamlit as st
+    st.error(f"Failed to load the dashboard: {e}")
+    st.info("Check that 4_dashboard/dashboard_main.py exists and dependencies are installed.")

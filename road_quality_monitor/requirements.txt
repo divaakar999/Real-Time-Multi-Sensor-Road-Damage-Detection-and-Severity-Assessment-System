@@ -1,37 +1,42 @@
-# Computer Vision (Pinned for headless compatibility)
-opencv-python-headless==4.8.1.78
-Pillow>=10.0.0
+# ============================================================
+# AI Road Quality Monitoring System - Requirements
+# Install with: pip install -r requirements.txt
+# ============================================================
 
-# Core AI - YOLOv8
-ultralytics==8.1.0
+# Core Deep Learning - YOLOv8
+ultralytics>=8.0.0          # YOLOv8 framework (includes PyTorch)
 
-# Data Science (Pinned to avoid NumPy 2.x breaking changes)
-numpy<2.0.0
+# Computer Vision
+opencv-python>=4.8.0         # Real-time video capture & processing
+Pillow>=10.0.0               # Image manipulation
+
+# Data Science & Evaluation
+numpy>=1.24.0
 pandas>=2.0.0
-scikit-learn>=1.3.0
-matplotlib>=3.7.0
-seaborn>=0.12.0
+scikit-learn>=1.3.0          # Baseline ML methods
+matplotlib>=3.7.0            # Plotting metrics
+seaborn>=0.12.0              # Advanced visualization
 
-# Dashboard & Web
-streamlit==1.32.0
-folium>=0.14.0
-streamlit-folium>=0.15.0
-streamlit-webrtc>=0.47.1
-plotly>=5.18.0
-av>=12.0.0
+# Dashboard
+streamlit>=1.28.0            # Web dashboard framework
+folium>=0.14.0               # Interactive maps
+streamlit-folium>=0.15.0     # Folium in Streamlit
+streamlit-webrtc>=0.47.0     # Cloud-ready webcam streaming
 
-# GPS & Geocoding
-gpsd-py3>=0.3.0
-geopy>=2.4.1
+# GPS Simulation & Real GPS
+gpsd-py3>=0.3.0              # Real GPS daemon client (optional)
+geopy>=2.4.0                 # GPS / geocoding utilities
 
-# Reports
-fpdf2>=2.7.0
-reportlab>=4.0.0
+# Report Generation
+reportlab>=4.0.0             # PDF generation
+fpdf2>=2.7.0                 # Alternative PDF library
+
+# Dataset Download & Management
+roboflow>=1.1.0              # Roboflow dataset API
+requests>=2.31.0
+tqdm>=4.66.0                 # Progress bars
 
 # Utilities
-roboflow>=1.1.0
-requests>=2.31.0
-tqdm>=4.66.0
-python-dotenv>=1.0.0
-loguru>=0.7.0
-PyYAML>=6.0
+python-dotenv>=1.0.0         # Environment variables
+loguru>=0.7.0                # Better logging
+PyYAML>=6.0                  # YAML config files

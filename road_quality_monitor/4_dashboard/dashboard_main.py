@@ -533,17 +533,17 @@ with tab1:
             start_btn = st.button(
                 "▶ Start Detection",
                 type      = "primary",
-                use_container_width = True,
+                width = "stretch",
                 disabled  = st.session_state["is_detecting"],
             )
         with btn_col2:
             stop_btn = st.button(
                 "⏹ Stop",
-                use_container_width = True,
+                width = "stretch",
                 disabled  = not st.session_state["is_detecting"],
             )
         with btn_col3:
-            clear_btn = st.button("🗑 Clear Data", use_container_width=True)
+            clear_btn = st.button("🗑 Clear Data", width="stretch")
 
         if clear_btn:
             st.session_state["detections"] = []
@@ -682,7 +682,7 @@ with tab2:
                 margin=dict(l=0, r=0, t=40, b=0),
             )
             fig_pie.update_traces(textinfo="percent+value", textfont_color="white")
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.plotly_chart(fig_pie, width="stretch")
 
         with chart2:
             # ── Damage Class Bar Chart ─────────────────────────────────
@@ -704,7 +704,7 @@ with tab2:
                 yaxis=dict(gridcolor="#30363d"),
             )
             fig_bar.update_traces(textposition="outside", textfont_color="#e6edf3")
-            st.plotly_chart(fig_bar, use_container_width=True)
+            st.plotly_chart(fig_bar, width="stretch")
 
         chart3, chart4 = st.columns(2)
 
@@ -728,7 +728,7 @@ with tab2:
                 xaxis=dict(gridcolor="#30363d"),
                 yaxis=dict(gridcolor="#30363d", title="Count"),
             )
-            st.plotly_chart(fig_hist, use_container_width=True)
+            st.plotly_chart(fig_hist, width="stretch")
 
         with chart4:
             # ── Severity × Class Heatmap ────────────────────────────────
@@ -753,7 +753,7 @@ with tab2:
                 font_color    = "#e6edf3", title_font_size=14,
                 margin        = dict(l=0, r=0, t=40, b=0),
             )
-            st.plotly_chart(fig_heat, use_container_width=True)
+            st.plotly_chart(fig_heat, width="stretch")
 
         # ── Time-series line chart ─────────────────────────────────────
         if "timestamp" in df.columns and df["timestamp"].notna().any():
@@ -777,7 +777,7 @@ with tab2:
                     yaxis=dict(gridcolor="#30363d"),
                     legend_title="Severity",
                 )
-                st.plotly_chart(fig_line, use_container_width=True)
+                st.plotly_chart(fig_line, width="stretch")
 
 
 with tab3:

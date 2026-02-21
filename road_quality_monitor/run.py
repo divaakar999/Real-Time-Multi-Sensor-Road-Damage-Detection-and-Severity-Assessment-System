@@ -171,8 +171,9 @@ Examples:
         check_requirements()
         test_modules()
 
+    elif args.dashboard:
         print("\n🌐 Launching Streamlit dashboard at http://localhost:8501")
-        run(f"streamlit run 4_dashboard/dashboard_main.py --server.port 8501 --theme.base dark")
+        run(f"streamlit run 4_dashboard/app.py --server.port 8501 --theme.base dark")
 
     elif args.detect:
         print(f"\n🎥 Starting live detection (source={args.source})")

@@ -23,13 +23,33 @@ import threading
 import numpy as np
 import pandas as pd
 import streamlit as st
-import cv2
+# ── Safety Imports ─────────────────────────────────────────────────────
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
+
 try:
     import plotly.express as px
     import plotly.graph_objects as go
     PLOTLY_AVAILABLE = True
 except ImportError:
     PLOTLY_AVAILABLE = False
+
+try:
+    from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
+    import av
+    WEBRTC_AVAILABLE = True
+except ImportError:
+    WEBRTC_AVAILABLE = False
+
+try:
+    from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
+    import av
+    WEBRTC_AVAILABLE = True
+except ImportError:
+    WEBRTC_AVAILABLE = False
 
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -38,6 +58,65 @@ from datetime import datetime, timedelta
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "3_detection"))
 sys.path.insert(0, str(ROOT / "4_dashboard"))
+
+# ── AI Model Cache ────────────────────────────────────────────────────
+@st.cache_resource
+def get_yolo_model(path):
+    from ultralytics import YOLO
+    return YOLO(str(path))
+
+# ── WebRTC Video Processor (Guarded) ───────────────────────────────────
+if WEBRTC_AVAILABLE:
+    class RoadDamageProcessor:
+        def __init__(self, model, clf, gps, conf, iou, road_classes):
+            self.model = model
+            self.clf   = clf
+            self.gps   = gps
+            self.conf  = conf
+            self.iou   = iou
+            self.road_classes = road_classes
+            self.new_detections = []
+
+        def recv(self, frame):
+            img = frame.to_ndarray(format="bgr24")
+            h, w = img.shape[:2]
+            results = self.model.predict(img, conf=self.conf, iou=self.iou, verbose=False)
+            
+            annotated = img.copy()
+            SEVERITY_BGR = {"HIGH": (0, 0, 220), "MEDIUM": (0, 165, 255), "LOW": (50, 200, 50)}
+            
+            for res in results:
+                for box in (res.boxes or []):
+                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                    cid = int(box.cls[0])
+                    cf  = float(box.conf[0])
+                    cn  = self.model.names.get(cid, f"class_{cid}")
+                    
+                    if cn.lower() in self.road_classes:
+                        sev   = self.clf.classify((x1, y1, x2, y2), (h, w), cn, cf)
+                        color = SEVERITY_BGR.get(sev, (255, 255, 255))
+                        label = f"{cn} [{sev}] {cf:.2f}"
+                        self.new_detections.append({
+                            "class": cn, "confidence": cf, "severity": sev,
+                            "bbox": [x1, y1, x2, y2], "gps": self.gps.get_current(),
+                            "timestamp": datetime.now().isoformat()
+                        })
+                    else:
+                        color = (180, 180, 180)
+                        label = f"{cn} {cf:.2f}"
+
+                    if CV2_AVAILABLE:
+                        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+                        cv2.putText(annotated, label, (x1, max(y1-6, 14)), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            
+            return av.VideoFrame.from_ndarray(annotated, format="bgr24")
+else:
+    class RoadDamageProcessor:
+        def __init__(self, *args, **kwargs):
+            pass
+        def recv(self, frame):
+            return frame
 
 # ── Page configuration (wrapped for safety) ────────────────────────────
 try:
@@ -300,16 +379,18 @@ with st.sidebar:
 
     # ── Video source ─────────────────────────────────────────────────
     st.markdown("### 📷 Video Source")
-    src_type = st.radio("Source Type", ["Webcam", "Video File", "RTSP Stream"])
-    if src_type == "Webcam":
+    src_type = st.radio("Source Type", ["Webcam (Local/Server)", "Browser Camera (Mobile)", "Video File", "RTSP Stream"], index=0)
+    
+    if src_type == "Browser Camera (Mobile)":
+        video_source = "webrtc"
+    elif src_type == "Webcam (Local/Server)":
         cam_idx = st.number_input("Camera Index", 0, 10, 0)
         video_source = cam_idx
     elif src_type == "Video File":
         uploaded = st.file_uploader("Upload Video", type=["mp4", "avi", "mov"])
         video_source = uploaded
     else:
-        rtsp_url  = st.text_input("RTSP URL", "rtsp://192.168.1.100:554/stream")
-        video_source = rtsp_url
+        video_source = st.text_input("RTSP URL", "rtsp://192.168.1.100:554/stream")
 
     st.markdown("---")
 
@@ -484,148 +565,137 @@ with tab1:
                     )
                     st.session_state["is_detecting"] = False
                 else:
-                    cap_src = (
-                        int(video_source) if isinstance(video_source, int)
-                        else str(video_source)
-                    )
-                    model   = YOLO(str(weights))
-                    clf     = SeverityClassifier()
-                    gps     = GPSTagger()
-                    cap     = cv2.VideoCapture(cap_src)
-
-                    # ── Detect whether this is a road-damage model or the demo ──
-                    # Road-damage models only have our 3 classes.
-                    # The demo yolov8n has 80 COCO classes.
                     ROAD_DAMAGE_CLASSES = {
                         "pothole", "crack", "wear",
                         "alligator crack", "longitudinal crack",
                         "transverse crack", "depression", "raveling",
                         "rutting", "bleeding", "damage",
                     }
-                    model_classes  = model.names          # dict: {0: 'person', ...}
-                    is_demo_model  = not any(
-                        v.lower() in ROAD_DAMAGE_CLASSES
-                        for v in model_classes.values()
-                    )
 
-                    if is_demo_model:
-                        st.warning(
-                            "⚠️ **Demo model active** — Using base YOLOv8 (COCO-trained, 80 classes). "
-                            "It will detect general objects (people, cars, etc.), NOT road damage. "
-                            "Train your road-damage model for accurate results: "
-                            "`python 2_model/train_yolov8.py`"
-                        )
+                    # ── BRANCH: WebRTC (Mobile) vs Local ───────────────────────────
+                    if video_source == "webrtc":
+                        if not WEBRTC_AVAILABLE:
+                            st.error("⚠️ Browser Camera (WebRTC) is not available. Please check dependencies.")
+                            st.session_state["is_detecting"] = False
+                        else:
+                            st.info("📱 **Browser Camera Active** — Detection is running on your device's stream.")
+                            ctx = webrtc_streamer(
+                                key="road-monitor-webrtc",
+                                mode=WebRtcMode.SENDRECV,
+                                rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
+                                video_processor_factory=lambda: RoadDamageProcessor(
+                                    get_yolo_model(weights), SeverityClassifier(), GPSTagger(),
+                                    conf_threshold, iou_threshold, ROAD_DAMAGE_CLASSES
+                                ),
+                                async_processing=True,
+                            )
+                            # Sync detections back to main state
+                            if ctx.video_processor and len(ctx.video_processor.new_detections) > 0:
+                                st.session_state["detections"].extend(ctx.video_processor.new_detections)
+                                ctx.video_processor.new_detections = []
 
-                    if not cap.isOpened():
-                        st.error(f"Cannot open video source: {video_source}")
-                        st.session_state["is_detecting"] = False
                     else:
-                        SEVERITY_BGR = {
-                            "HIGH": (0, 0, 220), "MEDIUM": (0, 165, 255), "LOW": (50, 200, 50)
-                        }
-                        # Colour for non-road-damage objects when using demo model
-                        NON_ROAD_BGR = (180, 180, 180)   # grey
+                        # ── BRANCH: Local Hardware / File ───────────────────────────
+                        cap_src = (
+                            int(video_source) if str(video_source).isdigit()
+                            else video_source
+                        )
+                        model   = get_yolo_model(weights)
+                        clf     = SeverityClassifier()
+                        gps     = GPSTagger()
+                        cap     = cv2.VideoCapture(cap_src)
 
-                        while st.session_state["is_detecting"]:
-                            ret, frame = cap.read()
-                            if not ret:
-                                break
+                        if not cap.isOpened():
+                            st.error(f"Cannot open video source: {video_source}")
+                            st.session_state["is_detecting"] = False
+                        else:
+                            SEVERITY_BGR = {
+                                "HIGH": (0, 0, 220), "MEDIUM": (0, 165, 255), "LOW": (50, 200, 50)
+                            }
+                            NON_ROAD_BGR = (180, 180, 180)
 
-                            results = model.predict(
-                                frame, conf=conf_threshold,
-                                iou=iou_threshold, verbose=False
-                            )
+                            while st.session_state["is_detecting"]:
+                                ret, frame = cap.read()
+                                if not ret:
+                                    break
 
-                            annotated = frame.copy()
-                            new_dets  = []
+                                results = model.predict(
+                                    frame, conf=conf_threshold,
+                                    iou=iou_threshold, verbose=False
+                                )
 
-                            for res in results:
-                                for box in (res.boxes or []):
-                                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                                    cid = int(box.cls[0])
-                                    cf  = float(box.conf[0])
+                                annotated = frame.copy()
+                                new_dets  = []
 
-                                    # ── Get the REAL class name from the model ──────
-                                    cn = model_classes.get(cid, f"class_{cid}")
+                                for res in results:
+                                    for box in (res.boxes or []):
+                                        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                                        cid = int(box.cls[0])
+                                        cf  = float(box.conf[0])
+                                        cn  = model.names.get(cid, f"class_{cid}")
+                                        
+                                        if cn.lower() in ROAD_DAMAGE_CLASSES:
+                                            sev    = clf.classify((x1, y1, x2, y2), frame.shape[:2], cn, cf)
+                                            color  = SEVERITY_BGR.get(sev, (255, 255, 255))
+                                            label  = f"{cn} [{sev}] {cf:.2f}"
+                                            gps_pt = gps.get_current()
+                                            new_dets.append({
+                                                "class": cn, "confidence": cf, "severity": sev,
+                                                "bbox": [x1, y1, x2, y2], "gps": gps_pt,
+                                                "timestamp": datetime.now().isoformat(),
+                                            })
+                                        else:
+                                            color = NON_ROAD_BGR
+                                            label = f"{cn} {cf:.2f}"
 
-                                    # ── Is this a road-damage class? ────────────────
-                                    is_road_damage = cn.lower() in ROAD_DAMAGE_CLASSES
+                                        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+                                        cv2.putText(annotated, label, (x1, max(y1-6, 14)),
+                                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-                                    if is_road_damage:
-                                        # Full road-damage pipeline
-                                        sev    = clf.classify(
-                                            (x1, y1, x2, y2), frame.shape[:2], cn, cf
-                                        )
-                                        color  = SEVERITY_BGR[sev]
-                                        label  = f"{cn} [{sev}] {cf:.2f}"
-                                        gps_pt = gps.get_current()
-                                        new_dets.append({
-                                            "class":      cn,
-                                            "confidence": cf,
-                                            "severity":   sev,
-                                            "bbox":       [x1, y1, x2, y2],
-                                            "gps":        gps_pt,
-                                            "timestamp":  datetime.now().isoformat(),
-                                        })
-                                    else:
-                                        # Demo model: show real class name + grey box
-                                        # so user sees the actual object (person, car, …)
-                                        color = NON_ROAD_BGR
-                                        label = f"{cn} {cf:.2f} [not road damage]"
+                                st.session_state["detections"].extend(new_dets)
+                                annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
+                                frame_placeholder.image(annotated_rgb, channels="RGB", use_container_width=True)
 
-                                    cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-                                    cv2.putText(
-                                        annotated, label,
-                                        (x1, max(y1 - 6, 14)),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.50, color, 2
-                                    )
+                                if len(st.session_state["detections"]) % 50 == 0:
+                                    with open(ROOT / "detections.json", "w") as jf:
+                                        json.dump(st.session_state["detections"], jf)
 
-                            # Only log road-damage detections to the session
-                            st.session_state["detections"].extend(new_dets)
-
-                            annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-                            frame_placeholder.image(
-                                annotated_rgb, channels="RGB",
-                                use_container_width=True
-                            )
-
-                            # Save to JSON every 50 frames
-                            if len(st.session_state["detections"]) % 50 == 0:
-                                with open(ROOT / "detections.json", "w") as jf:
-                                    json.dump(st.session_state["detections"], jf)
-
-                            time.sleep(0.02)   # ~50 fps maximum
-
-                        cap.release()
-            except ImportError as e:
+                                time.sleep(0.02)
+                            cap.release()
+            except Exception as e:
+                st.error(f"Error during detection: {e}")
                 st.error(f"Import error: {e}\nInstall requirements: pip install -r requirements.txt")
 
         else:
             # ── Static demo frame ──────────────────────────────────────
-            # Use a slightly lighter background so it's not a "black screen"
-            demo_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-            demo_frame[:] = (30, 35, 45) # Dark blue-grey
-            cv2.putText(demo_frame, "Road Monitor - IDLE",
-                        (180, 220), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (88, 166, 255), 2)
-            cv2.putText(demo_frame, "Click 'Start Detection' to activate feed",
-                        (110, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (139, 148, 158), 1)
+            if CV2_AVAILABLE:
+                demo_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                demo_frame[:] = (30, 35, 45) # Dark blue-grey
+                cv2.putText(demo_frame, "Road Monitor - IDLE",
+                            (180, 220), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (88, 166, 255), 2)
+                cv2.putText(demo_frame, "Click 'Start Detection' to activate feed",
+                            (110, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (139, 148, 158), 1)
 
-            # Draw sample bounding boxes for illustration
-            sample_boxes = [
-                ((80,  180, 200, 280), "pothole [HIGH]",   (0, 0, 220)),
-                ((300, 100, 500, 200), "crack [MEDIUM]",   (0, 165, 255)),
-            ]
-            for (x1,y1,x2,y2), label, color in sample_boxes:
-                cv2.rectangle(demo_frame, (x1,y1), (x2,y2), color, 2)
-                cv2.putText(demo_frame, label, (x1, y1-6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                # Draw sample bounding boxes for illustration
+                sample_boxes = [
+                    ((80,  180, 200, 280), "pothole [HIGH]",   (0, 0, 220)),
+                    ((300, 100, 500, 200), "crack [MEDIUM]",   (0, 165, 255)),
+                ]
+                for (x1,y1,x2,y2), label, color in sample_boxes:
+                    cv2.rectangle(demo_frame, (x1,y1), (x2,y2), color, 2)
+                    cv2.putText(demo_frame, label, (x1, y1-6),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-            frame_placeholder.image(
-                cv2.cvtColor(demo_frame, cv2.COLOR_BGR2RGB),
-                channels            = "RGB",
-                use_container_width = True,
-                caption             = "🎬 Dashboard active — Ready to start monitoring"
-            )
+                frame_placeholder.image(
+                    cv2.cvtColor(demo_frame, cv2.COLOR_BGR2RGB),
+                    channels            = "RGB",
+                    use_container_width = True,
+                    caption             = "🎬 Dashboard active — Ready to start monitoring"
+                )
+            else:
+                st.warning("⚠️ **OpenCV not available.** Visualization restricted.")
+                st.info("The system is running in headless/restricted mode. Live video processing requires OpenCV.")
+                frame_placeholder.info("📽️ Waiting for input source...")
 
     # ── RIGHT: Map ────────────────────────────────────────────────────
     with right_col:

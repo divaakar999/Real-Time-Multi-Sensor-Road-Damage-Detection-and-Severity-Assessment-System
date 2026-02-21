@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # 🛣️ AI-Based Road Quality Monitoring System
 
 A complete final-year project for detecting potholes, cracks, and road surface wear using YOLOv8 + GPS tagging + Streamlit dashboard.
@@ -64,6 +63,4 @@ streamlit run 4_dashboard/app.py
 | Low | 🟢 Green | Damage area < 5% of bounding box |
 | Medium | 🟡 Yellow | Damage area 5–20% |
 | High | 🔴 Red | Damage area > 20% |
-=======
-# Real-Time-Multi-Sensor-Road-Damage-Detection-and-Severity-Assessment-System
->>>>>>> e01f3cc01168d42d2be786986dc0904effefbda4
+

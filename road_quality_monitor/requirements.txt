@@ -7,11 +7,10 @@
 ultralytics>=8.0.0          # YOLOv8 framework (includes PyTorch)
 
 # Computer Vision
-opencv-python>=4.8.0         # Real-time video capture & processing
-Pillow>=10.0.0               # Image manipulation
+opencv-python-headless>=4.8.0 # Real-time video capture & processing
 
-# Data Science & Evaluation
-numpy>=1.24.0
+# Data Science (Pinned to avoid NumPy 2.x breaking changes)
+numpy<2.0.0
 pandas>=2.0.0
 scikit-learn>=1.3.0          # Baseline ML methods
 matplotlib>=3.7.0            # Plotting metrics

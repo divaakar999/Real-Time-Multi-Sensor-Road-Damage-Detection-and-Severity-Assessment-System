@@ -7,7 +7,7 @@
 ultralytics>=8.0.0          # YOLOv8 framework (includes PyTorch)
 
 # Computer Vision
-opencv-python>=4.8.0         # Real-time video capture & processing
+opencv-python-headless>=4.8.0 # Real-time video capture & processing (Headless for Cloud)
 Pillow>=10.0.0               # Image manipulation
 
 # Data Science & Evaluation

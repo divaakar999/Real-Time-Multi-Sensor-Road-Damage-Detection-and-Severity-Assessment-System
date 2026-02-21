@@ -542,17 +542,17 @@ with tab1:
             start_btn = st.button(
                 "▶ Start Detection",
                 type      = "primary",
-                use_container_width = True,
+                width = "stretch",
                 disabled  = st.session_state["is_detecting"],
             )
         with btn_col2:
             stop_btn = st.button(
                 "⏹ Stop",
-                use_container_width = True,
+                width = "stretch",
                 disabled  = not st.session_state["is_detecting"],
             )
         with btn_col3:
-            clear_btn = st.button("🗑 Clear Data", use_container_width=True)
+            clear_btn = st.button("🗑 Clear Data", width="stretch")
 
         if clear_btn:
             st.session_state["detections"] = []
@@ -639,7 +639,7 @@ with tab1:
                 frame_placeholder.image(
                     cv2.cvtColor(demo_frame, cv2.COLOR_BGR2RGB),
                     channels            = "RGB",
-                    use_container_width = True,
+                    width = "stretch",
                     caption             = "🎬 Dashboard active — Ready to start monitoring"
                 )
             else:
@@ -711,7 +711,7 @@ with tab2:
                 margin={"l": 0, "r": 0, "t": 40, "b": 0},
             )
             fig_pie.update_traces(textinfo="percent+value", textfont_color="white")
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.plotly_chart(fig_pie, width="stretch")
 
         with chart2:
             # ── Damage Class Bar Chart ─────────────────────────────────
@@ -733,7 +733,7 @@ with tab2:
                 yaxis=dict(gridcolor="#30363d"),
             )
             fig_bar.update_traces(textposition="outside", textfont_color="#e6edf3")
-            st.plotly_chart(fig_bar, use_container_width=True)
+            st.plotly_chart(fig_bar, width="stretch")
 
         chart3, chart4 = st.columns(2)
 
@@ -757,7 +757,7 @@ with tab2:
                 xaxis=dict(gridcolor="#30363d"),
                 yaxis=dict(gridcolor="#30363d", title="Count"),
             )
-            st.plotly_chart(fig_hist, use_container_width=True)
+            st.plotly_chart(fig_hist, width="stretch")
 
         with chart4:
             # ── Severity × Class Heatmap ────────────────────────────────
@@ -782,7 +782,7 @@ with tab2:
                 font_color    = "#e6edf3", title_font_size=14,
                 margin        = dict(l=0, r=0, t=40, b=0),
             )
-            st.plotly_chart(fig_heat, use_container_width=True)
+            st.plotly_chart(fig_heat, width="stretch")
 
         # ── Time-series line chart ─────────────────────────────────────
         if "timestamp" in df.columns and df["timestamp"].notna().any():
@@ -806,7 +806,7 @@ with tab2:
                     yaxis=dict(gridcolor="#30363d"),
                     legend_title="Severity",
                 )
-                st.plotly_chart(fig_line, use_container_width=True)
+                st.plotly_chart(fig_line, width="stretch")
 
 
 with tab3:
@@ -866,7 +866,7 @@ with tab3:
 
         st.dataframe(
             pd.DataFrame(rows),
-            use_container_width  = True,
+            width = "stretch",
             height              = 400,
         )
 
@@ -896,7 +896,7 @@ with tab4:
         route_name = st.text_input("Route / Road Name", "MG Road, Bangalore")
         inspector  = st.text_input("Inspector Name",    "AI Monitoring System")
 
-        if st.button("📄 Generate PDF Report", use_container_width=True, type="primary"):
+        if st.button("📄 Generate PDF Report", width="stretch", type="primary"):
             if not detections:
                 st.warning("No detections to report yet.")
             else:
@@ -914,7 +914,7 @@ with tab4:
                             data         = pdf_bytes,
                             file_name    = f"road_report_{ts}.pdf",
                             mime         = "application/pdf",
-                            use_container_width = True,
+                            width = "stretch",
                         )
                         st.success("✅ PDF ready for download!")
                     except Exception as e:
@@ -935,7 +935,7 @@ with tab4:
 
         st.markdown("<br/>", unsafe_allow_html=True)
 
-        if st.button("📊 Generate CSV Report", use_container_width=True):
+        if st.button("📊 Generate CSV Report", width="stretch"):
             if not detections:
                 st.warning("No detections to export yet.")
             else:
@@ -949,7 +949,7 @@ with tab4:
                             data         = csv_bytes,
                             file_name    = f"road_detections_{ts}.csv",
                             mime         = "text/csv",
-                            use_container_width = True,
+                            width = "stretch",
                         )
                         st.success("✅ CSV ready for download!")
                     except Exception as e:
@@ -1044,7 +1044,7 @@ if st.session_state["is_detecting"] and "🎥" in mode:
                         st.session_state["detections"].extend(new_dets)
                         if CV2_AVAILABLE:
                             annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-                            frame_placeholder.image(annotated_rgb, channels="RGB", use_container_width=True)
+                            frame_placeholder.image(annotated_rgb, channels="RGB", width="stretch")
                         
                         time.sleep(0.01)
                     cap.release()

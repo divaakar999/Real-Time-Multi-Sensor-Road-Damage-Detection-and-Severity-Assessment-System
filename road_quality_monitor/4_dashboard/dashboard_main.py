@@ -23,6 +23,23 @@ import threading
 import numpy as np
 import pandas as pd
 import streamlit as st
+from pathlib import Path
+from datetime import datetime, timedelta
+
+# ── NumPy 2.x Safety Check ───────────────────────────────────────────
+if np.__version__.startswith("2."):
+    st.error(f"❌ **NumPy 2.x detected ({np.__version__})**")
+    st.markdown("""
+        **Crucial:** NumPy 2.0 is currently incompatible with the pre-compiled YOLOv8 and OpenCV binaries 
+        used in this project. This is the cause of the **Black Screen** issue.
+        
+        **How to fix:**
+        1. Click the **three dots** ⋮ in the top right of your Streamlit app.
+        2. Select **Settings** → **Reboot App**.
+        3. The root `requirements.txt` has been updated to pin `numpy<2.0.0`.
+    """)
+    st.stop()
+
 # ── Safety Imports ─────────────────────────────────────────────────────
 try:
     import cv2
@@ -43,16 +60,6 @@ try:
     WEBRTC_AVAILABLE = True
 except ImportError:
     WEBRTC_AVAILABLE = False
-
-try:
-    from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
-    import av
-    WEBRTC_AVAILABLE = True
-except ImportError:
-    WEBRTC_AVAILABLE = False
-
-from pathlib import Path
-from datetime import datetime, timedelta
 
 # ── Add project root to path ───────────────────────────────────────────
 ROOT = Path(__file__).parent.parent
@@ -387,7 +394,7 @@ with st.sidebar:
 
     # ── Video source ─────────────────────────────────────────────────
     st.markdown("### 📷 Video Source")
-    src_type = st.radio("Source Type", ["Webcam (Local/Server)", "Browser Camera (Mobile)", "Video File", "RTSP Stream"], index=0)
+    src_type = st.radio("Source Type", ["Webcam (Local/Server)", "Browser Camera (Mobile)", "Video File", "RTSP Stream"], index=1)
     
     if src_type == "Browser Camera (Mobile)":
         video_source = "webrtc"
